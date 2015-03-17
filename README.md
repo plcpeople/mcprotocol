@@ -19,7 +19,9 @@ This has been tested only on direct connection to FX3U-ENET and FX3U-ENET-ADP.  
 
 UDP connections are not currently possible.  
 
-To configure a compatible connection on your FX, create a connection in the list (in FX-Configurator-EN for FX3U-ENET or GXWorks2 PLC Parameter for FX3U-ENET-ADP), Protocol "TCP", Open System "Unpassive", (Fixed buffer can be send or receive if using a FX3U-ENET), Fixed Buffer Communication Procedure set to "Procedure Exist (MC)", "Pairing Open" set to "Disable", Existence Confirmation set to "No Confirm" and "Port" set to a value that is the same as what you set when you initiate the connection from node.js.
+To configure a compatible connection on your FX with an FX3U-ENET, create a connection in the list (in FX-Configurator-EN for FX3U-ENET or GXWorks2 PLC Parameter for FX3U-ENET-ADP), Protocol "TCP", Open System "Unpassive", (Fixed buffer can be send or receive if using a FX3U-ENET), Fixed Buffer Communication Procedure set to "Procedure Exist (MC)", "Pairing Open" set to "Disable", Existence Confirmation set to "No Confirm" and "Port" set to a value that is the same as what you set when you initiate the connection from node.js.  
+
+With an FX3U-ENET-ADP the process is simpler - in GXWorks2, under PLC Parameter, Ethernet Setting, Open Setting, make sure one of the connections is set up as "TCP", "MC Protocol" and a matching port. 
 
 To get started:
 
@@ -41,7 +43,7 @@ Example usage:
 		  TEST7: 'D6001.2',				// Single bit at D6001
 		  TEST8: 'S4,2',				// 2 bits at S4
 		  TEST9: 'RFLOAT5000,40'		// 40 floating point numbers at R5000	
-};										// See setTranslationCB below for more examples
+	};										// See setTranslationCB below for more examples
 
 	conn.initiateConnection({port: 1281, host: '192.168.0.2', ascii: false}, connected); 
 
@@ -76,30 +78,31 @@ Example usage:
 
 
 This produces the following output, excluding some logs from mcprotocol.js itself:
-Done writing.
-{ TEST1: [ 0, 0, 0, 0, 0 ],
-  TEST6:
-   [ true,
-     false,
-     true,
-     false,
-     false,
-     true,
-     false,
-     false,
-     false,
-     false,
-     false,
-     false,
-     false,
-     true,
-     false,
-     true,
-     true,
-     false,
-     true,
-     true ],
-  TEST4: [ 666, 777 ] }
+	
+	Done writing.
+	{ TEST1: [ 0, 0, 0, 0, 0 ],
+	TEST6:
+	[ true,
+	     false,
+	     true,
+	     false,
+	     false,
+	     true,
+	     false,
+	     false,
+	     false,
+	     false,
+	     false,
+	     false,
+	     false,
+	     true,
+	     false,
+	     true,
+	     true,
+	     false,
+	     true,
+	     true ],
+	  TEST4: [ 666, 777 ] }
 	
 	
 	
