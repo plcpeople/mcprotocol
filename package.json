@@ -1,0 +1,29 @@
+{
+  "name": "mcprotocol",
+  "description": "Routine to communicate with Mitsubishi FX3U PLCs",
+  "version": "0.1.0",
+  "author": {
+    "name": "Dana Moffit",
+    "email": "nodejsplc@gmail.com"
+  },
+  "keywords": [
+    "MC",
+    "FX3U",
+    "PLC",
+    "Mitsubishi"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plcpeople/mcprotocol"
+  },
+  "main": "mcprotocol.js",
+  "dependencies": {
+    "underscore": "1.4.x"
+  },
+  "engine": "node 0.10.x",
+  "readmeFilename": "README.md",
+  "bugs": {
+    "url": "https://github.com/plcpeople/nodeS7/issues"
+  },
+  "homepage": "https://github.com/plcpeople/nodeS7"
+}
