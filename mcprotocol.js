@@ -1,5 +1,6 @@
-// MCPROTOCOL - A library for communication to Mitsubishi PLCs from node.js. 
-// Currently only FX3U CPUs using FX3U-ENET and FX3U-ENET-ADP modules (Ethernet modules) supported. 
+// MCPROTOCOL - A library for communication to Mitsubishi PLCs over Ethernet from node.js. 
+// Currently only FX3U CPUs using FX3U-ENET and FX3U-ENET-ADP modules (Ethernet modules) tested.
+// Please report experiences with others.
 
 // The MIT License (MIT)
 
@@ -132,6 +133,7 @@ MCProtocol.prototype.connectNow = function(cParam, suppressCallback) { // TODO -
 		self.onTCPConnect.apply(self,arguments);
 	});
 	
+	self.isoclient.setKeepAlive(true,2500); // For reliable unplug detection in most cases - although it takes 10 minutes to notify
 	self.isoConnectionState = 1;  // 1 = trying to connect
     
 	self.isoclient.on('error', function(){
@@ -254,6 +256,8 @@ MCProtocol.prototype.writeItems = function(arg, value, cb) {
 MCProtocol.prototype.findItem = function(useraddr) {
 	var self = this;
 	var i;
+	var commstate = { value: self.isoConnectionState !== 4, quality: 'OK' };
+	if (useraddr === '_COMMERR') { return commstate; }
 	for (i = 0; i < self.polledReadBlockList.length; i++) {
 		if (self.polledReadBlockList[i].useraddr === useraddr) { return self.polledReadBlockList[i]; } 
 	}
@@ -270,11 +274,11 @@ MCProtocol.prototype.addItemsNow = function(arg) {
 	var i;
 	outputLog("Adding " + arg,0,self.connectionID);
 	addItemsFlag = false;
-	if (typeof arg === "string") { 
+	if (typeof arg === "string" && arg !== "_COMMERR") { 
 		self.polledReadBlockList.push(stringToMCAddr(self.translationCB(arg), arg, self.octalInputOutput));
 	} else if (_.isArray(arg)) {
 		for (i = 0; i < arg.length; i++) {
-			if (typeof arg[i] === "string") {
+			if (typeof arg[i] === "string" && arg[i] !== "_COMMERR") {
 				self.polledReadBlockList.push(stringToMCAddr(self.translationCB(arg[i]), arg[i], self.octalInputOutput));
 			}
 		}
@@ -454,7 +458,7 @@ MCProtocol.prototype.prepareWritePacket = function() {
 		self.globalWriteBlockList[i].isOptimized = false;
 		self.globalWriteBlockList[i].itemReference = [];
 		self.globalWriteBlockList[i].itemReference.push(itemList[i]);
-		bufferizeMBItem(itemList[i],self.isAscii);
+		bufferizeMCItem(itemList[i],self.isAscii);
 	}
 		
 	// Split the blocks into requests, if they're too large.  
@@ -473,7 +477,7 @@ MCProtocol.prototype.prepareWritePacket = function() {
 		requestList[thisRequest] = self.globalWriteBlockList[i].clone();
 	
 		// How many parts?
-		self.globalWriteBlockList[i].parts = Math.ceil(self.globalWriteBlockList[i].byteLengthWrite/maxByteRequest); // This is still true for modbus coils
+		self.globalWriteBlockList[i].parts = Math.ceil(self.globalWriteBlockList[i].byteLengthWrite/maxByteRequest); 
 		outputLog("globalWriteBlockList " + i + " parts is " + self.globalWriteBlockList[i].parts + " offset is " + self.globalWriteBlockList[i].offset + " MBR is " + maxByteRequest,2);
 		
 		self.globalWriteBlockList[i].requestReference = [];
@@ -507,7 +511,7 @@ MCProtocol.prototype.prepareWritePacket = function() {
 			}
 			remainingLength -= maxByteRequest;
 			if (self.globalWriteBlockList[i].bitNative) {
-				startElement += maxByteRequest*2; 									   // I believe we want to in this case divide by the "register width" which for modbus is always 2 for holding regs			
+				startElement += maxByteRequest*2; 
 			} else {
 				startElement += maxByteRequest/2; 
 			}
@@ -615,7 +619,7 @@ MCProtocol.prototype.prepareReadPacket = function() {
 			//
 			// But if we had 40 bytes starting at byte 10 (which gives us byte 10-49) and we want byte 50, our byte length is 50-10 + 1 = 41.  
 
-			if (itemList[i].bitNative) { // Coils and inputs must be special-cased for Modbus
+			if (itemList[i].bitNative) { // Coils and inputs must be special-cased 
 				self.globalReadBlockList[thisBlock].byteLength = 
 					Math.max(
 						self.globalReadBlockList[thisBlock].byteLength, 
@@ -698,9 +702,9 @@ MCProtocol.prototype.prepareReadPacket = function() {
 			remainingLength -= maxByteRequest;
 			if (self.globalReadBlockList[i].bitNative) {
 //				startElement += maxByteRequest/requestList[thisRequest].multidtypelen;  
-				startElement += maxByteRequest*8; 									   // I believe we want to in this case divide by the "register width" which for modbus is always 2 for holding regs			
+				startElement += maxByteRequest*8;
 			} else {
-				startElement += maxByteRequest/2; //self.globalWriteBlockList[i].dataTypeByteLength(); // Element is word count
+				startElement += maxByteRequest/2; 
 			}
 			thisRequest++;
 		}		
@@ -730,7 +734,7 @@ MCProtocol.prototype.prepareReadPacket = function() {
 	
 		for (var i = requestNumber; i < requestList.length; i++) {
 			if (numItems >= 1) {
-				break;  // We can't fit this packet in here.  For now, this is always the case with Modbus.
+				break;  // We can't fit this packet in here.  For now, this is always the case as we only have one item in MC protocol.
 			}
 			requestNumber++;
 			numItems++;
@@ -839,15 +843,8 @@ MCProtocol.prototype.sendWritePacket = function() {
 		self.writePacketArray[i].reqTime = process.hrtime();	
 		
 		curLength = 0;
-
-		// We always need a Modbus header with the seq number, etc.  
-		// WIth MC we generate the simple header inside the packet generator as well
-		//self.Header.copy(self.writeReq, curLength);
-		//curLength = self.Header.length;
-
-		// Write the sequence number to the offset in the Modbus packet.  Eventually this should be moved to within the FOR loop if we keep a FOR loop.  But with only one PCCC command per packet we don't care.
-		//self.writeReq.writeUInt16BE(self.writePacketArray[i].seqNum, 0);
-		
+ 
+		// With MC we generate the simple header inside the packet generator as well
 		dataBufferPointer = 0;
 		for (var j = 0; j < self.writePacketArray[i].itemList.length; j++) {
 			returnedBfr = MCAddrToBuffer(self.writePacketArray[i].itemList[j], true /* writing */,self.isAscii);
@@ -1269,15 +1266,7 @@ function processMBPacket(theData, theItem, thePointer) {
 	
 	theItem.qualityBuffer.fill(0xC0);  // Fill with 0xC0 (192) which means GOOD QUALITY in the OPC world.  
 	outputLog('Marking quality as good L' + theItem.qualityBuffer.length,2);
-	
-//	thePointer += theItem.byteLength; //WithFill;
-	
-//	if (((thePointer - prePointer) % 2)) { // Odd number.  With the S7 protocol we only request an even number of bytes.  So there will // be a filler byte.  
-//		thePointer += 1;
-//	}
-
-//	outputLog("We have an item value of " + theItem.value + " for " + theItem.addr + " and pointer of " + thePointer);
-	
+		
 	return -1; //thePointer;
 }
 
@@ -1567,15 +1556,14 @@ function processMCReadItem(theItem, isAscii) {
 		thePointer += theItem.dtypelen; 	
 	}	
 
-	if (((thePointer) % 2)) { // Odd number.  With the S7 protocol we only request an even number of bytes.  So there will be a filler byte.  
+	if (((thePointer) % 2)) { // Odd number.  
 		thePointer += 1;
 	}
 
-//	outputLog("We have an item value of " + theItem.value + " for " + theItem.addr + " and pointer of " + thePointer);	
 	return thePointer; // Should maybe return a value now???
 }
 
-function bufferizeMBItem(theItem, isAscii) {	
+function bufferizeMCItem(theItem, isAscii) {	
 	var thePointer, theByte;
 	theByte = 0;
 	thePointer = 0; // After length and header
@@ -1646,7 +1634,6 @@ function bufferizeMBItem(theItem, isAscii) {
 				case "C":
 				case "CHAR":
 					// Convert to string.  
-//??					theItem.writeBuffer.writeUInt8(theItem.writeValue.toCharCode(), thePointer);
 					if (isAscii) {
 						if (arrayIndex % 2) {
 							theItem.writeBuffer.writeUInt8(theItem.writeValue.charCodeAt(arrayIndex), thePointer - 1);
@@ -1846,6 +1833,8 @@ function stringToMCAddr(addr, useraddr, octalInputOutput) {
 	"use strict";
 	var theItem, splitString, splitString2, prefix, postDotAlpha, postDotNumeric, forceBitDtype, preOctalOffset;
 	theItem = new PLCItem();
+
+	if (useraddr === '_COMMERR') { return undefined; } // Special-case for communication error status - this variable returns true when there is a communications error
 
 	splitString2 = addr.split(',');  
 	if (splitString2.length == 2) {
@@ -2102,14 +2091,14 @@ function PLCItem() { // Object
 	this.addr = undefined;
 	this.useraddr = undefined;
 
-	// First group is properties to do with S7 - these alone define the address.
+	// First group is properties to do with PLC item - these alone define the address.
 	this.addrtype = undefined;
 	this.datatype = undefined;
 	this.bitOffset = undefined;
 	this.byteOffset = undefined;
 	this.offset = undefined;	
 	this.arrayLength = undefined;
-	this.totalArrayLength = undefined; // Includes optimizations "tacked on" the end for Modbus coils.  
+	this.totalArrayLength = undefined; 
 
 	this.maxWordLength = function(isWriting) {
 		if (typeof(this.addrtype) === 'undefined') {

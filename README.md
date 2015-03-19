@@ -5,21 +5,21 @@ mcprotocol is a library that allows communication to Mitsubishi PLCs (currently 
 
 This software is not affiliated with Mitsubishi in any way, nor am I.  FX3U and MELSEC are trademarks of Mitsubishi.
 
-WARNING - This is BETA CODE and you need to be aware that WRONG VALUES could be written to WRONG LOCATIONS.  Fully test everything you do.  In situations where writing to a random area of memory within the PLC could cost you money, back up your data and test this really well.  If this could injure someone or worse, consider other software.  
+WARNING - This is BETA CODE and you need to be aware that WRONG VALUES could be written to WRONG LOCATIONS.  Fully test everything you do.  In situations where writing to a random area of memory within the PLC could cost you money, back up your data and test this really well.  If this could injure someone or worse, consider other software.
 
-It is optimized - it sorts a large number of items being requested from the PLC and decides what overall data areas to request, then it groups multiple small requests together in a single packet or number of packets up to the maximum length the protocol supports.   So a request for 100 different bits, all close (but not necessarily completely contiguous) will be grouped in one single request to the PLC, with no additional direction from the user.  
+It is optimized - it sorts a large number of items being requested from the PLC and decides what overall data areas to request, then it groups multiple small requests together in a single packet or number of packets up to the maximum length the protocol supports.   So a request for 100 different bits, all close (but not necessarily completely contiguous) will be grouped in one single request to the PLC, with no additional direction from the user.
 
 mcprotocol manages reconnects for you.  So if the connection is lost because the PLC is powered down or disconnected, you can continue to request data with no other action necessary.  "Bad" values are returned, and eventually the connection will be automatically restored.
 
 mcprotocol is written entirely in JavaScript, so no compiler or Python installation is necessary on Windows, and deployment on other platforms (ARM, etc) should be trivial.
 
-Either ASCII or binary communication is supported.  Binary communication is the default, as it is faster as less data is actually sent.  
+Either ASCII or binary communication is supported.  Binary communication is the default, as it is faster as less data is actually sent.
 
-This has been tested only on direct connection to FX3U-ENET and FX3U-ENET-ADP.  The Q-series E71 appears to support the same frames and should (in theory) work, but other PLCs are not supported.  Serial port access is not supported either - the protocol is slightly different.  This only sends and receives "A compatible 1E frames".  
+This has been tested only on direct connection to FX3U-ENET and FX3U-ENET-ADP.  The Q-series E71 appears to support the same frames and should (in theory) work, but other PLCs are not supported.  Serial port access is not supported either - the protocol is slightly different.  This only sends and receives "A compatible 1E frames". 
 
-UDP connections are not currently possible.  
+UDP connections are not currently possible.
 
-To configure a compatible connection on your FX with an FX3U-ENET, create a connection in the list (in FX-Configurator-EN for FX3U-ENET or GXWorks2 PLC Parameter for FX3U-ENET-ADP), Protocol "TCP", Open System "Unpassive", (Fixed buffer can be send or receive if using a FX3U-ENET), Fixed Buffer Communication Procedure set to "Procedure Exist (MC)", "Pairing Open" set to "Disable", Existence Confirmation set to "No Confirm" and "Port" set to a value that is the same as what you set when you initiate the connection from node.js.  
+To configure a compatible connection on your FX with an FX3U-ENET, create a connection in the list (in FX-Configurator-EN for FX3U-ENET or GXWorks2 PLC Parameter for FX3U-ENET-ADP), Protocol "TCP", Open System "Unpassive", (Fixed buffer can be send or receive if using a FX3U-ENET), Fixed Buffer Communication Procedure set to "Procedure Exist (MC)", "Pairing Open" set to "Disable", Existence Confirmation set to "Confirm" (No Confirm works as well, but can keep connections open for a long time causing failed reconnects) and "Port" set to a value that is the same as what you set when you initiate the connection from node.js.
 
 With an FX3U-ENET-ADP the process is simpler - in GXWorks2, under PLC Parameter, Ethernet Setting, Open Setting, make sure one of the connections is set up as "TCP", "MC Protocol" and a matching port. 
 
