@@ -55,6 +55,7 @@ function MCProtocol(){
 	self.requestMaxParallel = 1;
 	self.maxParallel = 1;				// MC protocol is read/response.  Parallel jobs not supported.
 	self.isAscii = 1;
+	self.frame = '1E';
 	self.octalInputOutput;
 	self.parallelJobsNow = 0;
 	self.maxGap = 5;
@@ -105,6 +106,14 @@ MCProtocol.prototype.initiateConnection = function (cParam, callback) {
 	} else {
 		self.isAscii = cParam.ascii;		
 	}
+	if (cParam.debug) {
+		effectiveDebugLevel = 99;	
+	}
+	if (typeof(cParam.frame) === 'undefined') {
+		self.frame = '1E';
+	} else {
+		self.frame = cParam.frame;		
+	}	
 	if (typeof(cParam.octalInputOutput) === 'undefined') {
 		self.octalInputOutput = true;
 	} else {
@@ -766,7 +775,11 @@ MCProtocol.prototype.sendReadPacket = function() {
 
 		// The FOR loop is left in here for now, but really we are only doing one request per packet for now.  
 		for (j = 0; j < self.readPacketArray[i].itemList.length; j++) {
-			returnedBfr = MCAddrToBuffer(self.readPacketArray[i].itemList[j],false /* not writing */,self.isAscii);
+			if (self.frame == '3E') {
+				returnedBfr = MCAddrToBuffer3E(self.readPacketArray[i].itemList[j],false /* not writing */,self.isAscii);
+			} else {
+				returnedBfr = MCAddrToBuffer1E(self.readPacketArray[i].itemList[j],false /* not writing */,self.isAscii);
+			}
 
 			outputLog('The Returned MC Buffer is:',2);
 			outputLog(returnedBfr, 2);
@@ -777,10 +790,7 @@ MCProtocol.prototype.sendReadPacket = function() {
 		}
 
 		outputLog("The final send buffer is:", 2);
-		if (self.isAscii) {
-			outputLog(asciize(self.readReq.slice(0,curLength)), 2);
-			outputLog(binarize(asciize(self.readReq.slice(0,curLength))),2);
-		} else {
+		if (!self.isAscii) {
 			outputLog(self.readReq.slice(0,curLength), 2);
 		}
 		
@@ -789,7 +799,13 @@ MCProtocol.prototype.sendReadPacket = function() {
 				self.packetTimeout.apply(self,arguments);
 			}, self.globalTimeout, "read", self.readPacketArray[i].seqNum); 
 			if (self.isAscii) {
-				self.isoclient.write(asciize(self.readReq.slice(0,curLength)));  			
+				var writeBuf = asciize(self.readReq.slice(0,curLength));
+				if (self.frame == '3E') {
+					writeBuf[30] = self.readPacketArray[i].itemList[0].areaSLMPCodeAscii.charCodeAt(0);
+					writeBuf[31] = self.readPacketArray[i].itemList[0].areaSLMPCodeAscii.charCodeAt(1);
+				}
+				self.isoclient.write(writeBuf);
+				outputLog(writeBuf, 2);
 			} else {
 				self.isoclient.write(self.readReq.slice(0,curLength));  // was 31
 			}
@@ -847,7 +863,11 @@ MCProtocol.prototype.sendWritePacket = function() {
 		// With MC we generate the simple header inside the packet generator as well
 		dataBufferPointer = 0;
 		for (var j = 0; j < self.writePacketArray[i].itemList.length; j++) {
-			returnedBfr = MCAddrToBuffer(self.writePacketArray[i].itemList[j], true /* writing */,self.isAscii);
+			if (self.frame == '3E') {
+				returnedBfr = MCAddrToBuffer3E(self.writePacketArray[i].itemList[j], true /* writing */,self.isAscii);
+			} else {
+				returnedBfr = MCAddrToBuffer1E(self.writePacketArray[i].itemList[j], true /* writing */,self.isAscii);
+			}
 			returnedBfr.copy(self.writeReq, curLength);
 			curLength += returnedBfr.length;
 		}
@@ -861,7 +881,12 @@ MCProtocol.prototype.sendWritePacket = function() {
 			outputLog("Actual Send Packet:",2);
 			outputLog(self.writeReq.slice(0,curLength),2);
 			if (self.isAscii) {
-				self.isoclient.write(asciize(self.writeReq.slice(0,curLength)));  // was 31
+				var writeBuf = asciize(self.writeReq.slice(0,curLength));
+				if (self.frame == '3E') {
+					writeBuf[30] = self.writePacketArray[i].itemList[0].areaSLMPCodeAscii.charCodeAt(0);
+					writeBuf[31] = self.writePacketArray[i].itemList[0].areaSLMPCodeAscii.charCodeAt(1);
+				}
+				self.isoclient.write(writeBuf);  // was 31
 			} else {
 				self.isoclient.write(self.writeReq.slice(0,curLength));  // was 31
 			}
@@ -934,6 +959,13 @@ MCProtocol.prototype.onResponse = function(rawdata) {
 		self.connectionReset();
 		return null;
 	}
+
+	if (data.length < 11 && self.frame == '3E') { 
+		outputLog('DATA LESS THAN 11 BYTES RECEIVED FOR 3E FRAME.  NO PROCESSING WILL OCCUR - CONNECTION RESET.');
+		outputLog(data,0);
+		self.connectionReset();
+		return null;
+	}
 	
 	outputLog('Valid MC Response Received (not yet checked for error)', 1);
 	
@@ -963,7 +995,7 @@ MCProtocol.prototype.onResponse = function(rawdata) {
 	}
 		
 	if ((!isReadResponse) && (!isWriteResponse)) {
-		outputLog("Sequence number that arrived wasn't a write or read reply - dropping");
+		outputLog("Packet arrived wasn't a write or read reply - dropping");
 		outputLog(data,0);
 		// 	I guess this isn't a showstopper, just ignore it.  In situations like this we used to reset.
 		return null;
@@ -973,6 +1005,10 @@ MCProtocol.prototype.onResponse = function(rawdata) {
 MCProtocol.prototype.writeResponse = function(data) {
 	var self = this;
 	var dataPointer = 2,i,anyBadQualities,sentPacketNum;
+
+	if (self.frame == '3E') {
+		dataPointer = 9;
+	}
 
 	for (packetCounter = 0; packetCounter < self.writePacketArray.length; packetCounter++) {
 		if (self.writePacketArray[packetCounter].sent && !(self.writePacketArray[packetCounter].rcvd)) {
@@ -992,7 +1028,7 @@ MCProtocol.prototype.writeResponse = function(data) {
 	}
 	
 	for (itemCount = 0; itemCount < self.writePacketArray[sentPacketNum].itemList.length; itemCount++) {
-		dataPointer = processMBWriteItem(data, self.writePacketArray[sentPacketNum].itemList[itemCount], dataPointer);
+		dataPointer = processMBWriteItem(data, self.writePacketArray[sentPacketNum].itemList[itemCount], dataPointer, self.frame);
 		if (!dataPointer) {
 			outputLog('Stopping Processing Write Response Packet due to unrecoverable packet error');
 			break;
@@ -1039,7 +1075,11 @@ MCProtocol.prototype.readResponse = function(data) {
 	var self = this;
 	var anyBadQualities,dataPointer = 21,rcvdPacketNum;  // For non-routed packets we start at byte 21 of the packet.  If we do routing it will be more than this.  
 	var dataObject = {};
-	
+
+	if (self.frame == '3E') {
+		dataPointer = 9;
+	}
+
 	outputLog("ReadResponse called",1,self.connectionID);
 
 	for (packetCounter = 0; packetCounter < self.readPacketArray.length; packetCounter++) {
@@ -1061,7 +1101,7 @@ MCProtocol.prototype.readResponse = function(data) {
 	}
 	
 	for (itemCount = 0; itemCount < self.readPacketArray[rcvdPacketNum].itemList.length; itemCount++) {
-		dataPointer = processMBPacket(data, self.readPacketArray[rcvdPacketNum].itemList[itemCount], dataPointer);
+		dataPointer = processMBPacket(data, self.readPacketArray[rcvdPacketNum].itemList[itemCount], dataPointer, self.frame);
 		if (!dataPointer && typeof(data) !== "undefined") {
 			// Don't bother showing this message on timeout.
 			outputLog('Received a ZERO RESPONSE Processing Read Packet due to unrecoverable packet error');
@@ -1133,7 +1173,7 @@ MCProtocol.prototype.readResponse = function(data) {
 
 MCProtocol.prototype.onClientDisconnect = function() {
 	var self = this;
-	outputLog('EIP/TCP DISCONNECTED.');
+	outputLog('TCP DISCONNECTED.');
 	self.connectionCleanup();
 	self.tryingToConnectNow = false;
 }
@@ -1198,7 +1238,7 @@ function doneSending(element) {
 	return ((element.sent && element.rcvd) ? true : false);
 }
 
-function processMBPacket(theData, theItem, thePointer) {
+function processMBPacket(theData, theItem, thePointer, frame) {
 	var remainingLength;
 	
 	if (typeof(theData) === "undefined") {
@@ -1225,41 +1265,61 @@ function processMBPacket(theData, theItem, thePointer) {
 		}
 		return 0;   			// Hard to increment the pointer so we call it a malformed packet and we're done.      
 	}
-	
-	if (theData[0] !== 0x81) { // 0x80 = bit reply, 0x81 = word reply
-		theItem.valid = false;
-		theItem.errCode = 'Invalid MC - Expected first byte (binary) to be 0x81 (129) - got ' + decimalToHexString(theData[0]) + " (" + theData[0] + ")";
-		outputLog(theItem.errCode);
-		return 1; //thePointer + reportedDataLength + 4;
-	}
-	
-	if (theData[1] !== 0x00) {
-		theItem.valid = false;
-		theItem.errCode = 'MC Error Response - Second Byte is ' + theData[1] + ' and error code is ' + theData[2];
-		outputLog(theItem.errCode);
-		return 1; //thePointer + reportedDataLength + 4;   			      
-	}	
 
-	// There is no reported data length to check here - 
-	// reportedDataLength = theData[9];
-
-	expectedLength = theItem.byteLength;
+	if (frame == '3E') {
+		// Need to improve this.
+		expectedLength = theItem.byteLength;
 			
-	if (theData.length - 2 !== expectedLength) {
-		theItem.valid = false;
-		theItem.errCode = 'Invalid Response Length - Expected ' + expectedLength + ' but got ' + (theData.length - 2) + ' bytes.';
-		outputLog(theItem.errCode);
-		return 1;  
-	}	
+		if (theData.length - 9 !== expectedLength) {
+			theItem.valid = false;
+			theItem.errCode = 'Invalid Response Length - Expected ' + expectedLength + ' but got ' + (theData.length - 9) + ' bytes.';
+			outputLog(theItem.errCode);
+			return 1;  
+		}	
+	} else {
+		if (theData[0] !== 0x81) { // 0x80 = bit reply, 0x81 = word reply
+			theItem.valid = false;
+			theItem.errCode = 'Invalid MC - Expected first byte (binary) to be 0x81 (129) - got ' + decimalToHexString(theData[0]) + " (" + theData[0] + ")";
+			outputLog(theItem.errCode);
+			return 1; //thePointer + reportedDataLength + 4;
+		}
 	
+		if (theData[1] !== 0x00) {
+			theItem.valid = false;
+			theItem.errCode = 'MC Error Response - Second Byte is ' + theData[1] + ' and error code is ' + theData[2];
+			outputLog(theItem.errCode);
+			return 1; //thePointer + reportedDataLength + 4;   			      
+		}	
+
+		// There is no reported data length to check here - 
+		// reportedDataLength = theData[9];
+
+		expectedLength = theItem.byteLength;
+			
+		if (theData.length - 2 !== expectedLength) {
+			theItem.valid = false;
+			theItem.errCode = 'Invalid Response Length - Expected ' + expectedLength + ' but got ' + (theData.length - 2) + ' bytes.';
+			outputLog(theItem.errCode);
+			return 1;  
+		}	
+	}
 	// Looks good so far.  
-	// Increment our data pointer past the 2 byte subheader and complete code.
-	thePointer += 2;
+	// Increment our data pointer past the 2 byte subheader and complete code for 1E, or more for 3E.
+	if (frame == '3E') {
+		thePointer += 9;
+	} else {
+		thePointer += 2;
+	}
 	
 	var arrayIndex = 0;
 	
 	theItem.valid = true;
-	theItem.byteBuffer = theData.slice(2); // This means take to end.
+
+	if (frame == '3E') {
+		theItem.byteBuffer = theData.slice(9); // This means take to end.
+	} else {
+		theItem.byteBuffer = theData.slice(2); // This means take to end.
+	}
 	
 	outputLog('Byte Buffer is:',2);
 	outputLog(theItem.byteBuffer,2);
@@ -1270,20 +1330,31 @@ function processMBPacket(theData, theItem, thePointer) {
 	return -1; //thePointer;
 }
 
-function processMBWriteItem(theData, theItem, thePointer) {
+function processMBWriteItem(theData, theItem, thePointer, frame) {
 	
 //	var remainingLength = theData.length - thePointer;  // Say if length is 39 and pointer is 35 we can access 35,36,37,38 = 4 bytes.  
 //	var prePointer = thePointer;
-	
-	if (typeof(theData) === 'undefined' || theData.length < 2) {  // Should be at least 11 bytes with 7 byte header
-		theItem.valid = false;
-		theItem.errCode = 'Malformed Reply MC Packet - Less Than 2 Bytes' + theData;
-		outputLog(theItem.errCode);
-		theItem.writeQualityBuffer.fill(0xFF);  // Note that ff is BAD in our fill here. 		
-		return 0;   			// Hard to increment the pointer so we call it a malformed packet and we're done.      
+	var writeResponse;	
+
+	if (frame == '3E') {
+		if (typeof(theData) === 'undefined' || theData.length < 11) {  // Should be at least 11 bytes
+			theItem.valid = false;
+			theItem.errCode = 'Malformed Reply MC Packet - Less Than 11 Bytes' + theData;
+			outputLog(theItem.errCode);
+			theItem.writeQualityBuffer.fill(0xFF);  // Note that ff is BAD in our fill here. 		
+			return 0;   			// Hard to increment the pointer so we call it a malformed packet and we're done.      
+		}
+		writeResponse = theData.readUInt8(1);
+	} else {
+		if (typeof(theData) === 'undefined' || theData.length < 2) {  // Should be at least 11 bytes with 7 byte header
+			theItem.valid = false;
+			theItem.errCode = 'Malformed Reply MC Packet - Less Than 2 Bytes' + theData;
+			outputLog(theItem.errCode);
+			theItem.writeQualityBuffer.fill(0xFF);  // Note that ff is BAD in our fill here. 		
+			return 0;   			// Hard to increment the pointer so we call it a malformed packet and we're done.      
+		}
+		writeResponse = theData.readUInt8(9);
 	}
-	
-	var writeResponse = theData.readUInt8(1);
 	
 	if (writeResponse !== 0x00 || (theData[0] !== 0x82) && (theData[0] !== 0x83)) {
 		if (theData.length > 2) {
@@ -1749,7 +1820,7 @@ function isQualityOK(obj) {
 	return true;
 }
 
-function MCAddrToBuffer(addrinfo, isWriting, isAscii) { 
+function MCAddrToBuffer1E(addrinfo, isWriting, isAscii) { 
 	var headerLength, writeLength, MCCommand = new Buffer(300);  // 12 is max length with all fields at max.  
 	
 	headerLength = 4;
@@ -1827,6 +1898,130 @@ function MCAddrToBuffer(addrinfo, isWriting, isAscii) {
 	}
 	
 	return MCCommand.slice(0,12+writeLength); // WriteLength is the length we write.  writeLength - 1 is the data length.  
+}
+
+function MCAddrToBuffer3E(addrinfo, isWriting, isAscii) { 
+	var headerLength, writeLength, MCCommand = new Buffer(300);  // 12 is max length with all fields at max.  
+	
+	headerLength = 11; // Length before
+
+	MCCommand[0] = 0x50; // Subheader byte 0
+	MCCommand[1] = 0x00; // Subheader byte 1
+	MCCommand[2] = 0x00; // Network number
+	MCCommand[3] = 0xff; // Destination station number
+	if (isAscii) { // Destination module IO number
+		MCCommand.writeUInt16BE(0x03ff, 4);
+	} else {
+		MCCommand.writeUInt16LE(0x03ff, 4);	
+	}	
+
+	MCCommand[6] = 0x00; // Destination multidrop station number
+	MCCommand[7] = 0x00; // Length 0
+	MCCommand[8] = 0x00; // Length 1
+	if (isAscii) { // Destination module IO number
+		MCCommand.writeUInt16BE(0x0010, 9);
+	} else {
+		MCCommand.writeUInt16LE(0x0010, 9);	
+	}
+
+	if (isAscii) {
+		outputLog("We're Ascii",2);
+	} else {
+		outputLog("We're Binary",2);
+	}
+	
+	// Set the command
+	if (isWriting) {		
+		if (isAscii) {
+			MCCommand.writeUInt16BE(0x1401, 11);
+		} else {
+			MCCommand.writeUInt16LE(0x1401, 11);	
+		}
+	} else {
+		if (isAscii) {
+			MCCommand.writeUInt16BE(0x0401, 11);
+		} else {
+			MCCommand.writeUInt16LE(0x0401, 11);	
+		}
+	}
+
+
+	// Hard code the subcommand.  Note that for bit devices, we use the less-efficient, but easier to program, bit device read.
+	if (addrinfo.bitNative && isWriting) {
+		MCCommand.writeUInt16BE(0x0001, 13); // Bits
+	} else {
+		MCCommand.writeUInt16LE(0x0000, 13); // Words (even when reading bits)
+	}
+	
+	writeLength = isWriting ? (addrinfo.byteLengthWrite) : 0; // Shouldn't ever be zero
+	
+	// Write the data request offset
+	if (isAscii) {
+		// Big endian - overwrite first byte (msb) with type code below at 15.
+		if (isWriting) {
+			MCCommand.writeUInt32BE(asHex(addrinfo.offset), 15);
+		} else {
+			MCCommand.writeUInt32BE(asHex(addrinfo.requestOffset), 15);
+		}
+	} else {
+		// Little endian - overwrite last byte (msb) with type code below at 19.
+		if (isWriting) {
+			MCCommand.writeUInt32LE(addrinfo.offset, 15);
+		} else {
+			// RequestOffset ensures bit-native types are read as a word
+			MCCommand.writeUInt32LE(addrinfo.requestOffset, 15);
+		}
+	}
+
+	// Write the data type code
+	if (isAscii) {
+		MCCommand.writeUInt8(0, 15);  // Need to fill in later. Can't asciize this.
+	} else {
+		MCCommand.writeUInt8(addrinfo.areaSLMPCodeBinary, 18);
+	}
+	
+	// Number of elements in request - for single-bit, 16-bit, 32-bit, this is always the number of WORDS
+	if (isAscii) {
+		if (addrinfo.bitNative && isWriting) {
+			// set to bit length
+			MCCommand.writeUInt16BE(asHex(addrinfo.arrayLength), 19);
+		} else if (addrinfo.bitNative && !isWriting) {
+			MCCommand.writeUInt16BE(asHex(Math.ceil((addrinfo.arrayLength + addrinfo.remainder)/16)), 19);
+		} else {
+// doesn't work with optimized blocks where array length isn't right		MCCommand.writeUInt8(addrinfo.arrayLength*addrinfo.dataTypeByteLength()/2, 10);
+			if (isWriting) {
+				MCCommand.writeUInt16BE(asHex(addrinfo.byteLengthWrite/2), 19);
+			} else {
+				MCCommand.writeUInt16BE(asHex(addrinfo.byteLength/2), 19);		
+			}
+		}
+	} else {
+		if (addrinfo.bitNative && isWriting) {
+			// set to bit length
+			MCCommand.writeUInt16LE(addrinfo.arrayLength, 19);
+		} else if (addrinfo.bitNative && !isWriting) {
+			MCCommand.writeUInt16LE(Math.ceil((addrinfo.arrayLength + addrinfo.remainder)/16), 19);
+		} else {
+// doesn't work with optimized blocks where array length isn't right		MCCommand.writeUInt8(addrinfo.arrayLength*addrinfo.dataTypeByteLength()/2, 10);
+			if (isWriting) {
+				MCCommand.writeUInt16LE(addrinfo.byteLengthWrite/2, 19);
+			} else {
+				MCCommand.writeUInt16LE(addrinfo.byteLength/2, 19);		
+			}
+		}
+	}
+	
+	if (isWriting) {
+		addrinfo.writeBuffer.copy(MCCommand,21,0,writeLength);
+	}
+
+	if (isAscii) {
+		MCCommand.writeUInt16BE((12 + writeLength)*2, 7);
+	} else {
+		MCCommand.writeUInt16LE(12 + writeLength, 7);
+	}
+	
+	return MCCommand.slice(0,21+writeLength); // WriteLength is the length we write.  writeLength - 1 is the data length.  
 }
 
 function stringToMCAddr(addr, useraddr, octalInputOutput) {
@@ -1984,38 +2179,58 @@ function stringToMCAddr(addr, useraddr, octalInputOutput) {
 	switch (theItem.addrtype) {
 	case "D":	// Data
 		theItem.areaMCCode = 0x4420;
+		theItem.areaSLMPCodeBinary = 0xA8;
+		theItem.areaSLMPCodeAscii = 'D*';
 //		theItem.maxWordLen = 64;
 		break;
 	case "R":	// Extension
 		theItem.areaMCCode = 0x5220;
+		theItem.areaSLMPCodeBinary = 0xAF;
+		theItem.areaSLMPCodeAscii = 'R*';
 //		theItem.maxWordLen = 64;
 		break;
 	case "TN":	// Timer current value
 		theItem.areaMCCode = 0x544e;
+		theItem.areaSLMPCodeBinary = 0xC2;
+		theItem.areaSLMPCodeAscii = 'TN';
 //		theItem.maxWordLen = 64;
 		break;
 	case "TS":	// Timer contact
 		theItem.areaMCCode = 0x5453;
+		theItem.areaSLMPCodeBinary = 0xC1;
+		theItem.areaSLMPCodeAscii = 'TS';
 //		theItem.maxWordLen = 64;
 		break;		
 	case "CN":	// Counter current value
 		theItem.areaMCCode = 0x434e;
+		theItem.areaSLMPCodeBinary = 0xC5;
+		theItem.areaSLMPCodeAscii = 'CN';
 //		theItem.maxWordLen = (depends on whether it's 32-bit (>200) or not, see FX3U-ENET-ADP manual)
 		break;
 	case "CS":	// Counter contact
 		theItem.areaMCCode = 0x4353;
+		theItem.areaSLMPCodeBinary = 0xC4;
+		theItem.areaSLMPCodeAscii = 'CS';
 		break;	
 	case "X":	// Input
 		theItem.areaMCCode = 0x5820;
+		theItem.areaSLMPCodeBinary = 0x9c;
+		theItem.areaSLMPCodeAscii = 'X*';
 		break;	
 	case "Y":	// Output
 		theItem.areaMCCode = 0x5920; 
+		theItem.areaSLMPCodeBinary = 0x9d;
+		theItem.areaSLMPCodeAscii = 'Y*';
 		break;	
 	case "M":	// Auxiliary Relay
 		theItem.areaMCCode = 0x4d20;
+		theItem.areaSLMPCodeBinary = 0x90;
+		theItem.areaSLMPCodeAscii = 'M*';
 		break;	
 	case "S":	// State
 		theItem.areaMCCode = 0x5320;
+		theItem.areaSLMPCodeBinary = 0x98;
+		theItem.areaSLMPCodeAscii = 'S*';
 		break;	
 	default:
 		outputLog('Failed to find a match for ' + theItem.addrtype + ' possibly because that type is not supported yet.');
@@ -2083,6 +2298,8 @@ function PLCPacket() {
 function PLCItem() { // Object
 	// MC only
 	this.areaMCCode = undefined;
+	this.areaSLMPCodeBinary = undefined;
+	this.areaSLMPCodeAscii = undefined;
 	this.bitNative = undefined;
 	this.startRegister = undefined;
 	this.byteLengthWrite = undefined;
@@ -2171,7 +2388,7 @@ function PLCItem() { // Object
 	// These next properties can be calculated from the above properties, and may be converted to functions.
 	this.dtypelen = undefined;
 	this.multidtypelen = undefined; // multi-datatype length.  Different than dtypelen when requesting a timer preset, for example, which has width two but dtypelen of 2.
-	this.areaMCCode = undefined;
+
 	this.byteLength = undefined;
 	this.byteLengthWithFill = undefined;
 	
@@ -2347,4 +2564,9 @@ function asciize(buf) {
 function zeroPad(num, places) {
   var zero = places - num.toString(16).length + 1;
   return Array(+(zero > 0 && zero)).join("0") + num.toString(16);
+}
+
+function asHex(num) {
+	// This returns "100" as "0x100" which will code to 100 as ASCII.
+	return parseInt(num.toString(),16);
 }
