@@ -1270,9 +1270,9 @@ function processMBPacket(theData, theItem, thePointer, frame) {
 		// Need to improve this.
 		expectedLength = theItem.byteLength;
 			
-		if (theData.length - 9 !== expectedLength) {
+		if (theData.length - 11 !== expectedLength) {
 			theItem.valid = false;
-			theItem.errCode = 'Invalid Response Length - Expected ' + expectedLength + ' but got ' + (theData.length - 9) + ' bytes.';
+			theItem.errCode = 'Invalid Response Length - Expected ' + expectedLength + ' but got ' + (theData.length - 11) + ' bytes.';
 			outputLog(theItem.errCode);
 			return 1;  
 		}	
@@ -1306,7 +1306,7 @@ function processMBPacket(theData, theItem, thePointer, frame) {
 	// Looks good so far.  
 	// Increment our data pointer past the 2 byte subheader and complete code for 1E, or more for 3E.
 	if (frame == '3E') {
-		thePointer += 9;
+		thePointer += 11;
 	} else {
 		thePointer += 2;
 	}
@@ -1316,7 +1316,7 @@ function processMBPacket(theData, theItem, thePointer, frame) {
 	theItem.valid = true;
 
 	if (frame == '3E') {
-		theItem.byteBuffer = theData.slice(9); // This means take to end.
+		theItem.byteBuffer = theData.slice(11); // This means take to end.
 	} else {
 		theItem.byteBuffer = theData.slice(2); // This means take to end.
 	}
