@@ -1,7 +1,7 @@
 {
   "name": "mcprotocol",
   "description": "Routine to communicate with Mitsubishi FX3U PLCs",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": {
     "name": "Dana Moffit",
     "email": "nodejsplc@gmail.com"
@@ -18,7 +18,7 @@
   },
   "main": "mcprotocol.js",
   "dependencies": {
-    "underscore": "1.4.x"
+    "underscore": "^1.13.1"
   },
   "engine": "node 0.10.x",
   "readmeFilename": "README.md",
